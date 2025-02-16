@@ -1,0 +1,71 @@
+pipeline {
+  agent {
+    docker {
+      image 'node:20-slim' // Use Node 20 slim image for a lighter Docker image
+      args '--user root -v /var/run/docker.sock:/var/run/docker.sock' // Mount Docker socket to access the host's Docker daemon
+    }
+  }
+  environment {
+    DOCKER_REGISTRY = "index.docker.io"
+    DOCKER_CREDENTIALS = "docker-cred"
+    SONAR_URL = "http://34.201.116.83:9000"
+    GIT_REPO_NAME = "cicd" // Repo name remains the same
+    GIT_USER_NAME = "NITYES" // Your GitHub username
+    IMAGE_TAG = "nityes01/ultimate-cicd:${BUILD_NUMBER}" // Updated to use your Docker Hub username
+    DEPLOYMENT_FILE_PATH = "deployment.yml"  // Deployment file path in the root directory
+    SERVICE_FILE_PATH = "service.yml"        // Service file path in the root directory (if needed)
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        // Checkout from the correct GitHub repository
+        git branch: 'main', url: 'https://github.com/NITYES/cicd.git'
+      }
+    }
+    stage('Build and Test') {
+      steps {
+        sh 'ls -ltr'
+        // Build NestJS app using npm (since it is a Node.js app)
+        sh 'cd nestjs-app && npm install && npm run build'
+      }
+    }
+    stage('Static Code Analysis') {
+      steps {
+        withCredentials([string(credentialsId: 'sonarqube', variable: 'SONAR_AUTH_TOKEN')]) {
+          // Run SonarQube analysis (adjust this to your actual codebase location)
+          sh 'cd nestjs-app && npm run sonar:sonar -Dsonar.login=$SONAR_AUTH_TOKEN -Dsonar.host.url=${SONAR_URL}'
+        }
+      }
+    }
+    stage('Build and Push Docker Image') {
+      steps {
+        script {
+          // Build the Docker image for the NestJS app
+          sh 'cd nestjs-app && docker build -t ${IMAGE_TAG} .'
+          // Push Docker image to registry (this will create the repository automatically on Docker Hub if it doesn't exist)
+          def dockerImage = docker.image("${IMAGE_TAG}")
+          docker.withRegistry('https://index.docker.io/v1/', DOCKER_CREDENTIALS) {
+            dockerImage.push()
+          }
+        }
+      }
+    }
+    stage('Update Kubernetes Deployment') {
+      steps {
+        withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
+          // Replace image tag in Kubernetes deployment manifest (deployment.yml in root directory)
+          sh '''
+            git config user.email "your-email@example.com"
+            git config user.name "Your Name"
+            BUILD_NUMBER=${BUILD_NUMBER}
+            sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" ${DEPLOYMENT_FILE_PATH}
+            git add ${DEPLOYMENT_FILE_PATH}
+            git commit -m "Update deployment image to version ${BUILD_NUMBER}"
+            git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
+          '''
+        }
+      }
+    }
+  }
+}

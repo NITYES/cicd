@@ -1,0 +1,23 @@
+# Use official Node.js 20 base image
+FROM node:20
+
+# Set the working directory inside the container
+WORKDIR /app
+
+# Copy package.json and package-lock.json first (for better caching)
+COPY package*.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy the entire application code
+COPY . .
+
+# Build the application (if using TypeScript)
+RUN npm run build
+
+# Expose the application port (Adjust if needed)
+EXPOSE 3000
+
+# Start the application
+CMD ["npm", "run", "start"]
